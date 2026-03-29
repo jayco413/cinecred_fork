@@ -23,6 +23,11 @@ import jxl.write.WritableCellFormat
 import jxl.write.WritableFont
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import kotlin.io.path.*
 
@@ -375,7 +380,7 @@ object CsvFormat : SpreadsheetFormat {
     override val label get() = l10n("projectIO.spreadsheet.csv")
 
     override fun read(file: Path, defaultName: String): Pair<List<Spreadsheet>, List<ParserMsg>> {
-        return Pair(listOf(read(file.readText(), defaultName)), emptyList())
+        return Pair(listOf(read(decodeCsvText(file.readBytes()), defaultName)), emptyList())
     }
 
     fun read(text: String, name: String): Spreadsheet {
@@ -398,6 +403,34 @@ object CsvFormat : SpreadsheetFormat {
     }
 
 }
+
+private fun decodeCsvText(bytes: ByteArray): String {
+    if (bytes.size >= 3 &&
+        bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()
+    )
+        return String(bytes, 3, bytes.size - 3, StandardCharsets.UTF_8)
+
+    if (bytes.size >= 2) {
+        if (bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte())
+            return String(bytes, 2, bytes.size - 2, StandardCharsets.UTF_16LE)
+        if (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte())
+            return String(bytes, 2, bytes.size - 2, StandardCharsets.UTF_16BE)
+    }
+
+    try {
+        return StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
+    } catch (_: CharacterCodingException) {
+        // Legacy CSVs from spreadsheet tools on Windows are often saved in the local ANSI code page.
+        // On common Western Windows installs this is Windows-1252, which includes characters such as ü and ¡.
+        return String(bytes, WINDOWS_1252)
+    }
+}
+
+private val WINDOWS_1252: Charset = Charset.forName("windows-1252")
 
 
 class FormatUnavailableException(message: String) : IOException(message)

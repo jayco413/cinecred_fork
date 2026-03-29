@@ -115,6 +115,7 @@ dependencies {
 
     // Testing
     testImplementation("org.junit.jupiter", "junit-jupiter", "5.13.3")
+    testRuntimeOnly("org.junit.platform", "junit-platform-launcher", "1.13.3")
 }
 
 configurations.configureEach {
