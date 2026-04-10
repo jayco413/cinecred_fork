@@ -1073,17 +1073,19 @@ class DeferredVideo private constructor(
                         insn.firstFrameIdx + relFirstFrameIdx + placed.embeddedTape.leftMarginFrames * video.fpsScaling
                     var lastFrameIdx =
                         insn.firstFrameIdx + relLastFrameIdx - placed.embeddedTape.rightMarginFrames * video.fpsScaling
-                    val extraneousFrames = (lastFrameIdx - firstFrameIdx + 1) - rangeFrames
-                    if (extraneousFrames > 0)
-                        when (placed.embeddedTape.align) {
-                            START -> lastFrameIdx -= extraneousFrames
-                            END -> firstFrameIdx += extraneousFrames
-                            MIDDLE -> {
-                                val half = extraneousFrames / 2
-                                firstFrameIdx += half
-                                lastFrameIdx -= extraneousFrames - half  // account for odd numbers
+                    if (!placed.embeddedTape.loop) {
+                        val extraneousFrames = (lastFrameIdx - firstFrameIdx + 1) - rangeFrames
+                        if (extraneousFrames > 0)
+                            when (placed.embeddedTape.align) {
+                                START -> lastFrameIdx -= extraneousFrames
+                                END -> firstFrameIdx += extraneousFrames
+                                MIDDLE -> {
+                                    val half = extraneousFrames / 2
+                                    firstFrameIdx += half
+                                    lastFrameIdx -= extraneousFrames - half  // account for odd numbers
+                                }
                             }
-                        }
+                    }
                     if (firstFrameIdx > lastFrameIdx)
                         continue
                     add(Span(insn, placed, firstFrameIdx, lastFrameIdx))
@@ -1131,7 +1133,7 @@ class DeferredVideo private constructor(
                     val start = span.embeddedTape.range.start
                     val endExcl = span.embeddedTape.range.endExclusive
                     var tmp = 0
-                    val timecode = when {
+                    val rawTimecode = when {
                         span.embeddedTape.tape.fileSeq -> when (span.embeddedTape.align) {
                             START -> start + Timecode.Frames(pastFrames / video.fpsScaling)
                             END -> endExcl - Timecode.Frames(futureFrames / video.fpsScaling + 1)
@@ -1151,6 +1153,10 @@ class DeferredVideo private constructor(
                                         Timecode.Frames(span.firstFrameIdx + span.lastFrameIdx).toClock(video.fps) / 2
                         }
                     }
+                    val timecode = if (span.embeddedTape.loop)
+                        loopTimecode(rawTimecode, start, endExcl, video.fps)
+                    else
+                        rawTimecode
                     val fileSeqFirstField = span.embeddedTape.tape.fileSeq && when (span.embeddedTape.align) {
                         START -> (pastFrames * 2 / video.fpsScaling) % 2 == 0
                         END -> (futureFrames * 2 / video.fpsScaling) % 2 == 1
@@ -1208,6 +1214,25 @@ class DeferredVideo private constructor(
             var userData: U? = null
             val embeddedTape get() = placed.embeddedTape
         }
+
+        private fun loopTimecode(timecode: Timecode, start: Timecode, endExcl: Timecode, fps: FPS): Timecode =
+            when (start) {
+                is Timecode.Frames -> {
+                    val startFrames = start.frames
+                    val endFrames = (endExcl as Timecode.Frames).frames
+                    val durationFrames = endFrames - startFrames
+                    val relFrames = ((timecode as Timecode.Frames).frames - startFrames).mod(durationFrames)
+                    Timecode.Frames(startFrames + relFrames)
+                }
+                is Timecode.Clock -> {
+                    val startFrames = start.toFrames(fps).frames
+                    val endFrames = (endExcl as Timecode.Clock).toFramesCeil(fps).frames
+                    val durationFrames = endFrames - startFrames
+                    val relFrames = (timecode.toFrames(fps).frames - startFrames).mod(durationFrames)
+                    Timecode.Frames(startFrames + relFrames).toClock(fps)
+                }
+                else -> throw IllegalStateException("Wrong timecode format: ${start.javaClass.simpleName}")
+            }
 
     }
 

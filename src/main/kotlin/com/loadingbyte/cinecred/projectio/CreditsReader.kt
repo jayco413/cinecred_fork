@@ -908,6 +908,7 @@ private class CreditsReader(
                 val isOut = hint in OUT_KW
                 val isMid = hint in MIDDLE_KW
                 val isEnd = hint in END_KW
+                val isLoop = hint in LOOP_KW
                 if (isMargin || isFade) {
                     hints.remove()
                     val projFPS = styling.global.fps
@@ -960,6 +961,9 @@ private class CreditsReader(
                         }
                 } else if (isMid || isEnd) {
                     style = style.copy(temporallyJustify = if (isMid) HJustify.CENTER else HJustify.RIGHT)
+                    hints.remove()
+                } else if (isLoop) {
+                    style = style.copy(loop = true)
                     hints.remove()
                 } else {
                     style = try {
@@ -1023,6 +1027,7 @@ private class CreditsReader(
         val END_KW = legacyKeyword("End", "Konec", "Ende", "Fin", "末尾")
         val IN_KW = legacyKeyword("In", "Entrée", "入点")
         val OUT_KW = legacyKeyword("Out", "Sortie", "出点")
+        val LOOP_KW = legacyKeyword("Loop")
 
         private fun legacyKeyword(vararg kwSet: String) =
             TreeSet(ROOT_CASE_INSENSITIVE_COLLATOR).apply { addAll(kwSet) }
