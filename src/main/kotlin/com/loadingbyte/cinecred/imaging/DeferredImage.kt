@@ -127,19 +127,28 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
      * Draws the content of this deferred image onto the given [Canvas]. The canvas must be backed by a bitmap. Raster
      * content is aligned with the canvas' pixel grid to prevent interpolation and retain as much quality as possible.
      */
-    fun materialize(canvas: Canvas, cache: CanvasMaterializationCache?, layers: List<Layer>) {
+    fun materialize(
+        canvas: Canvas,
+        cache: CanvasMaterializationCache?,
+        layers: List<Layer>,
+        frameIdx: Int = 0,
+        animateFlashingText: Boolean = false,
+        flashingTextMode: FlashingTextMode = FlashingTextMode.ALL
+    ) {
         require(canvas.bitmap != null) { "To materialize to an SVG or PDF, use the specialized methods." }
         val backend = CanvasBackend(canvas, cache as CanvasMaterializationCacheImpl?)
         // If only a portion of the deferred image is materialized, cull the rest to improve performance.
         // Notice that because the culling rect is aligned with the pixel grid, we correctly include all content
         // that at least partially lies inside one of the surface's pixels.
         val culling = Rectangle2D.Double(0.0, 0.0, canvas.width, canvas.height)
-        materializeDeferredImage(backend, 0.0, 0.0, 1.0, 1.0, culling, this, layers)
+        materializeDeferredImage(
+            backend, 0.0, 0.0, 1.0, 1.0, culling, this, layers, frameIdx, animateFlashingText, flashingTextMode
+        )
     }
 
     /** Draws the content of this deferred image onto an SVG element. */
     fun materialize(svg: Element, layers: List<Layer>) {
-        materializeDeferredImage(SVGBackend(svg), 0.0, 0.0, 1.0, 1.0, null, this, layers)
+        materializeDeferredImage(SVGBackend(svg), 0.0, 0.0, 1.0, 1.0, null, this, layers, 0, false, FlashingTextMode.ALL)
     }
 
     /** Draws the content of this deferred onto a PDF page. */
@@ -154,20 +163,26 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
         layers: List<Layer>
     ) {
         val backend = PDFBackend(doc, page, cs, masterColorSpace, shrinkRasters, jpegRasters, rasterizeSVGs)
-        materializeDeferredImage(backend, 0.0, 0.0, 1.0, 1.0, null, this, layers)
+        materializeDeferredImage(backend, 0.0, 0.0, 1.0, 1.0, null, this, layers, 0, false, FlashingTextMode.ALL)
         backend.end()
     }
 
     fun collectPlacedTapes(layers: List<Layer>): List<PlacedTape> {
         val backend = PlacedTapeCollectorBackend()
-        materializeDeferredImage(backend, 0.0, 0.0, 1.0, 1.0, null, this, layers)
+        materializeDeferredImage(backend, 0.0, 0.0, 1.0, 1.0, null, this, layers, 0, false, FlashingTextMode.ALL)
         return backend.collected
     }
+
+    fun hasFlashingText(layers: List<Layer>): Boolean = collectFlashingStateIndices(layers, frameIdx = 0, testOnly = true) != null
+
+    fun flashingStateKey(layers: List<Layer>, frameIdx: Int): FlashingStateKey? =
+        collectFlashingStateIndices(layers, frameIdx, testOnly = false)?.let(::FlashingStateKey)
 
     private fun materializeDeferredImage(
         backend: MaterializationBackend,
         x: Double, y: Double, universeScaling: Double, elasticScaling: Double, culling: Rectangle2D?,
-        image: DeferredImage, layers: List<Layer>
+        image: DeferredImage, layers: List<Layer>, frameIdx: Int, animateFlashingText: Boolean,
+        flashingTextMode: FlashingTextMode
     ) {
         if (culling != null) {
             // We want seemingly degenerate images (which can occur when a width or height is forced down to 0)
@@ -181,24 +196,31 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
         }
         for (layer in layers)
             for (insn in image.instructions.getOrDefault(layer, emptyList()))
-                materializeInstruction(backend, x, y, universeScaling, elasticScaling, culling, insn)
+                materializeInstruction(
+                    backend, x, y, universeScaling, elasticScaling, culling,
+                    insn, frameIdx, animateFlashingText, flashingTextMode
+                )
     }
 
     private fun materializeInstruction(
         backend: MaterializationBackend,
         x: Double, y: Double, universeScaling: Double, elasticScaling: Double, culling: Rectangle2D?,
-        insn: Instruction
+        insn: Instruction, frameIdx: Int, animateFlashingText: Boolean, flashingTextMode: FlashingTextMode
     ) {
         when (insn) {
             is Instruction.DrawDeferredImageLayer -> materializeDeferredImage(
                 backend, x + universeScaling * insn.x, y + universeScaling * insn.y.resolve(elasticScaling),
                 universeScaling * insn.universeScaling, elasticScaling * insn.elasticScaling, culling,
-                insn.image, listOf(insn.layer)
+                insn.image, listOf(insn.layer), frameIdx, animateFlashingText, flashingTextMode
             )
-            is Instruction.DrawShape -> materializeShape(
-                backend, x + universeScaling * insn.x, y + universeScaling * insn.y.resolve(elasticScaling),
-                universeScaling, culling, insn.shape, insn.coat, insn.fill, false, universeScaling * insn.blurRadius
-            )
+            is Instruction.DrawShape -> {
+                if (!shouldDraw(insn.coat, flashingTextMode)) return
+                materializeShape(
+                    backend, x + universeScaling * insn.x, y + universeScaling * insn.y.resolve(elasticScaling),
+                    universeScaling, culling, insn.shape, resolveTextCoat(insn.coat, frameIdx, animateFlashingText),
+                    insn.fill, false, universeScaling * insn.blurRadius
+                )
+            }
             is Instruction.DrawLine -> materializeShape(
                 backend, x, y, universeScaling, culling,
                 Line2D.Double(insn.x1, insn.y1.resolve(elasticScaling), insn.x2, insn.y2.resolve(elasticScaling)),
@@ -210,10 +232,13 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
                     insn.x, insn.y.resolve(elasticScaling), insn.width, insn.height.resolve(elasticScaling)
                 ), Coat.Plain(insn.color), insn.fill, dash = false, blurRadius = 0.0
             )
-            is Instruction.DrawText -> materializeText(
-                backend, x + universeScaling * insn.x, y + universeScaling * insn.yBaseline.resolve(elasticScaling),
-                universeScaling, culling, insn.text, insn.coat
-            )
+            is Instruction.DrawText -> {
+                if (!shouldDraw(insn.coat, flashingTextMode)) return
+                materializeText(
+                    backend, x + universeScaling * insn.x, y + universeScaling * insn.yBaseline.resolve(elasticScaling),
+                    universeScaling, culling, insn.text, resolveTextCoat(insn.coat, frameIdx, animateFlashingText)
+                )
+            }
             is Instruction.DrawEmbeddedPicture -> materializeEmbeddedPicture(
                 backend, x + universeScaling * insn.x, y + universeScaling * insn.y.resolve(elasticScaling),
                 universeScaling, culling, insn.embeddedPic
@@ -287,6 +312,47 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
         backend.materializeEmbeddedTape(x, y, scaling, embeddedTape, asyncThumbnail)
     }
 
+    private fun collectFlashingStateIndices(
+        layers: List<Layer>,
+        frameIdx: Int,
+        testOnly: Boolean
+    ): List<Int>? {
+        val stateIndices = if (testOnly) null else mutableListOf<Int>()
+        val found = collectFlashingStateIndices(this, layers, frameIdx, stateIndices)
+        return when {
+            !found -> null
+            testOnly -> emptyList()
+            else -> stateIndices
+        }
+    }
+
+    private fun collectFlashingStateIndices(
+        image: DeferredImage,
+        layers: List<Layer>,
+        frameIdx: Int,
+        stateIndices: MutableList<Int>?
+    ): Boolean {
+        var found = false
+        for (layer in layers)
+            for (insn in image.instructions.getOrDefault(layer, emptyList()))
+                when (insn) {
+                    is Instruction.DrawDeferredImageLayer ->
+                        found = collectFlashingStateIndices(insn.image, listOf(insn.layer), frameIdx, stateIndices) || found
+                    is Instruction.DrawShape ->
+                        if (insn.coat is Coat.Flashing) {
+                            stateIndices?.add((frameIdx / insn.coat.intervalFrames).mod(insn.coat.colors.size))
+                            found = true
+                        }
+                    is Instruction.DrawText ->
+                        if (insn.coat is Coat.Flashing) {
+                            stateIndices?.add((frameIdx / insn.coat.intervalFrames).mod(insn.coat.colors.size))
+                            found = true
+                        }
+                    else -> {}
+                }
+        return found
+    }
+
 
     companion object {
 
@@ -300,16 +366,19 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
 
         private fun Coat.isVisible(): Boolean = when (this) {
             is Coat.Plain -> color.a != 0f
+            is Coat.Flashing -> colors.any { it.a != 0f }
             is Coat.Gradient -> color1.a != 0f || color2.a != 0f
         }
 
         private fun Coat.transform(tx: AffineTransform): Coat = when (this) {
             is Coat.Plain -> this
+            is Coat.Flashing -> this
             is Coat.Gradient -> Coat.Gradient(color1, color2, tx.transform(point1, null), tx.transform(point2, null))
         }
 
         private fun Coat.toShader() = when (this) {
             is Coat.Plain -> Canvas.Shader.Solid(color)
+            is Coat.Flashing -> Canvas.Shader.Solid(colors.first())
             // We interpolate Gradients in the sRGB color space instead of a better alternative (like linear RGB or
             // Oklab) for a couple of reasons:
             //   - Gradient interpolation in sRGB is pretty much the default at this point, for better or for worse.
@@ -327,6 +396,20 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
         }
 
         private fun gaussianStdDev(radius: Double) = radius / 2.0
+
+        internal fun resolveTextCoat(coat: Coat, frameIdx: Int, animateFlashingText: Boolean): Coat = when (coat) {
+            is Coat.Flashing ->
+                Coat.Plain(
+                    coat.colors[if (!animateFlashingText) 0 else (frameIdx / coat.intervalFrames).mod(coat.colors.size)]
+                )
+            else -> coat
+        }
+
+        private fun shouldDraw(coat: Coat, flashingTextMode: FlashingTextMode): Boolean = when (flashingTextMode) {
+            FlashingTextMode.ALL -> true
+            FlashingTextMode.EXCLUDE -> coat !is Coat.Flashing
+            FlashingTextMode.ONLY -> coat is Coat.Flashing
+        }
 
         private fun embeddedPictureTransform(
             x: Double, y: Double, scaling: Double, embeddedPic: EmbeddedPicture
@@ -352,8 +435,13 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
 
     sealed interface Coat {
         class Plain(val color: Color4f) : Coat
+        class Flashing(val colors: List<Color4f>, val intervalFrames: Int) : Coat
         class Gradient(val color1: Color4f, val color2: Color4f, val point1: Point2D, val point2: Point2D) : Coat
     }
+
+    enum class FlashingTextMode { ALL, EXCLUDE, ONLY }
+
+    data class FlashingStateKey(val colorIndices: List<Int>)
 
 
     interface Text {
@@ -717,14 +805,15 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
 
         private fun applyCoat(coatedElement: Element, coat: Coat, fill: Boolean) {
             when (coat) {
-                is Coat.Plain -> {
+                is Coat.Plain, is Coat.Flashing -> {
+                    val plain = resolveTextCoat(coat, 0, false) as Coat.Plain
                     val prefix = if (fill) "fill" else {
                         coatedElement.setAttribute("fill", "none")
                         "stroke"
                     }
-                    coatedElement.setAttribute(prefix, coat.color.toSRGBHexString())
-                    if (coat.color.a != 1f)
-                        coatedElement.setAttribute("$prefix-opacity", F.format(coat.color.a.toDouble()))
+                    coatedElement.setAttribute(prefix, plain.color.toSRGBHexString())
+                    if (plain.color.a != 1f)
+                        coatedElement.setAttribute("$prefix-opacity", F.format(plain.color.a.toDouble()))
                 }
                 is Coat.Gradient -> {
                     val gradientId = "gradient${++gradientCtr}"
@@ -1080,8 +1169,8 @@ class DeferredImage(var width: Double = 0.0, var height: Y = 0.0.toY()) {
         /** This function expects both the Coat and the bound box to be in global coordinates (but Y is not flipped). */
         private fun setCoat(coat: Coat, fill: Boolean, bbox: Rectangle2D) {
             when (coat) {
-                is Coat.Plain -> {
-                    val color = coat.color.convert(masterColorSpace, clamp = true)
+                is Coat.Plain, is Coat.Flashing -> {
+                    val color = (resolveTextCoat(coat, 0, false) as Coat.Plain).color.convert(masterColorSpace, clamp = true)
                     val pdColor = PDColor(color.rgb(), obtainICCBasedCS(masterColorSpace))
                     if (fill) cs.setNonStrokingColor(pdColor) else cs.setStrokingColor(pdColor)
                     if (color.a != 1f) cs.setGraphicsStateParameters(makeExtGState(fill, color.a))

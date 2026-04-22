@@ -142,12 +142,35 @@ tasks.withType<KotlinCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    jvmArgs("--enable-preview", "--add-modules", addModules.joinToString(","))
 }
 
 
 val writeVersionFile by tasks.registering(WriteFile::class) {
     text = version.toString()
     outputFile = layout.buildDirectory.file("generated/version/version")
+}
+
+val buildId: String by lazy {
+    fun git(vararg args: String): String? =
+        try {
+            providers.exec { commandLine("git", *args) }.standardOutput.asText.get().trim().ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+
+    val head = git("rev-parse", "--verify", "HEAD")
+    val dirty = git("status", "--porcelain", "--untracked-files=no").isNullOrBlank().not()
+    when {
+        head == null -> version.toString()
+        dirty -> "$head-dirty"
+        else -> head
+    }
+}
+
+val writeBuildIdFile by tasks.registering(WriteFile::class) {
+    text = buildId
+    outputFile = layout.buildDirectory.file("generated/build-id/build-id")
 }
 
 val writeLocalesFile by tasks.registering(WriteFile::class) {
@@ -176,6 +199,7 @@ val collectPOMLicenses by tasks.registering(CollectPOMLicenses::class) {
 
 tasks.processResources {
     from(writeVersionFile)
+    from(writeBuildIdFile)
     from(writeLocalesFile)
     from(writeCopyrightFile)
     from(drawSplash)
@@ -223,15 +247,31 @@ val platformNativesTasks = Platform.values().associateWith { platform ->
     }
 }
 
+val testPlatform = when {
+    System.getProperty("os.name").lowercase().contains("win") -> Platform.WINDOWS
+    System.getProperty("os.name").lowercase().contains("mac") ->
+        if (System.getProperty("os.arch").lowercase().contains("aarch")) Platform.MAC_ARM else Platform.MAC_X86
+    else -> Platform.LINUX
+}
+
+tasks.test {
+    dependsOn(platformNativesTasks.getValue(testPlatform))
+    jvmArgs(
+        "-Djava.library.path=${platformNativesTasks.getValue(testPlatform).get().destinationDir}",
+        "--enable-native-access=ALL-UNNAMED"
+    )
+}
+
 
 for (platform in Platform.values()) {
     val platformNatives = platformNativesTasks.getValue(platform)
     val mainClass_ = mainClass
+    val platformAddOpens = addOpensFor(platform.os)
     val jvmArgs_ = listOf(
         "-Djava.library.path=${platformNatives.get().destinationDir}",
         "-splash:${tasks.processResources.get().destinationDir}/$splashScreen",
         "--add-modules", addModules.joinToString(",")
-    ) + addOpens.flatMap { listOf("--add-opens", "$it=ALL-UNNAMED") } + javaOptions.split(" ")
+    ) + platformAddOpens.flatMap { listOf("--add-opens", "$it=ALL-UNNAMED") } + javaOptions.split(" ")
     tasks.register<JavaExec>("runOn${platform.label.capitalized()}") {
         group = "Execution"
         description = "Runs the program on ${platform.label.capitalized()}."
@@ -274,6 +314,11 @@ val writeAppStreamFile by tasks.registering(WriteAppStreamFile::class) {
     outputFile = layout.buildDirectory.file("generated/appStreamFile/cinecred.metainfo.xml")
 }
 
+fun addOpensFor(os: Platform.OS): List<String> = addOpens.filterNot {
+    it == "java.desktop/com.apple.eawt" && os != Platform.OS.MAC ||
+            it == "java.desktop/sun.awt.X11" && os != Platform.OS.LINUX
+}
+
 val preparePlatformPackagingTasks = Platform.values().map { platform ->
     // Collect all files needed for packaging in a folder.
     tasks.register<Sync>("prepare${platform.label.capitalized()}Packaging") {
@@ -294,7 +339,7 @@ val preparePlatformPackagingTasks = Platform.values().map { platform ->
                 "MAIN_CLASS" to mainClass,
                 "JAVA_OPTIONS" to "-Djava.library.path=\$APPDIR" +
                         " --add-modules ${addModules.joinToString(",")} " +
-                        addOpens.joinToString(" ") { "--add-opens $it=ALL-UNNAMED" } +
+                        addOpensFor(platform.os).joinToString(" ") { "--add-opens $it=ALL-UNNAMED" } +
                         " -splash:\$APPDIR/$splashScreen $javaOptions",
                 "OS" to platform.os.slug,
                 "ARCH" to platform.arch.slug,
@@ -363,7 +408,7 @@ tasks.register<Jar>("allJar") {
         "Main-Class" to mainClass,
         "SplashScreen-Image" to splashScreen,
         "Enable-Native-Access" to "ALL-UNNAMED",
-        "Add-Opens" to addOpens.joinToString(" ")
+        "Add-Opens" to addOpensFor(testPlatform.os).joinToString(" ")
     )
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(sourceSets.main.map { it.output })

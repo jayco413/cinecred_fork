@@ -2,12 +2,14 @@ package com.loadingbyte.cinecred.project
 
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.toPersistentList
+import java.lang.reflect.Constructor
 import java.lang.reflect.ParameterizedType
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty1
 
 
 private val settingsCache = HashMap<Class<*>, List<StyleSetting<*, *>>>()
+private val constructorCache = HashMap<Class<*>, Constructor<*>>()
 
 fun <S : Style> getStyleSettings(styleClass: Class<S>): List<StyleSetting<S, *>> {
     val cached = settingsCache[styleClass]
@@ -53,11 +55,20 @@ fun <S : Style> S.copy(notarizedSettingValues: List<NotarizedStyleSettingValue<i
         val notarized = notarizedSettingValues.find { (it as NotarSetImpl).setting == setting }
         if (notarized != null) (notarized as NotarSetImpl).settingValue else setting.get(this)
     }
-    return javaClass.cast(javaClass.constructors[0].newInstance(*constructorArgs))
+    return javaClass.cast(getStyleConstructor(javaClass, settings.size).newInstance(*constructorArgs))
 }
 
 fun <S : Style> newStyleUnsafe(styleClass: Class<S>, settingValues: List<*>): S =
-    styleClass.cast(styleClass.constructors[0].newInstance(*settingValues.toTypedArray()))
+    styleClass.cast(getStyleConstructor(styleClass, settingValues.size).newInstance(*settingValues.toTypedArray()))
+
+
+private fun <S : Style> getStyleConstructor(styleClass: Class<S>, settingCount: Int): Constructor<*> =
+    constructorCache.getOrPut(styleClass) {
+        styleClass.declaredConstructors.singleOrNull { !it.isSynthetic && it.parameterCount == settingCount }
+            ?: throw IllegalStateException(
+                "No non-synthetic constructor with $settingCount parameters found for ${styleClass.name}."
+            )
+    }
 
 
 sealed interface NotarizedStyleSettingValue<S : Style>

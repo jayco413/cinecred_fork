@@ -87,6 +87,7 @@ class StyleFormAdjuster(
             for (layer in letterStyle.layers) {
                 if (layer.coloring != LayerColoring.OFF)
                     colorSet.add(layer.color1)
+                colorSet.addAll(layer.flashColors)
                 if (layer.coloring == LayerColoring.GRADIENT)
                     colorSet.add(layer.color2)
             }

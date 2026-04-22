@@ -593,10 +593,13 @@ class SVGIcon private constructor(
         SVGIcon(svg, this.xScaling * xScaling, this.yScaling * yScaling, recolor, isDisabled)
 
     companion object {
-        fun load(name: String) = SVGIcon(
-            requireNotNull(SVGLoader().load(SVGIcon::class.java.getResource(name)!!)) { "Can't load SVG icon: $name" },
-            1.0, 1.0, null, false
-        )
+        fun load(name: String): SVGIcon {
+            val resource = SVGIcon::class.java.getResource(name)
+                ?: SVGIcon::class.java.classLoader.getResource(name.removePrefix("/"))
+            requireNotNull(resource) { "Missing SVG icon resource: $name" }
+            val svg = requireNotNull(SVGLoader().load(resource)) { "Can't load SVG icon: $name" }
+            return SVGIcon(svg, 1.0, 1.0, null, false)
+        }
     }
 
 

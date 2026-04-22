@@ -7,6 +7,7 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.awt.geom.AffineTransform
 import java.lang.ref.SoftReference
+import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicReference
@@ -312,7 +313,9 @@ class DeferredVideo private constructor(
         private val userSpec: Bitmap.Spec,
         private val canvasCeiling: Float? = 1f,
         private val cache: DeferredImage.CanvasMaterializationCache? = null,
-        private val randomAccessDraftMode: Boolean = false
+        private val randomAccessDraftMode: Boolean = false,
+        private val animateFlashingText: Boolean = false,
+        private val diskCache: RenderDiskCache.Session? = null
     ) : AutoCloseable {
 
         init {
@@ -381,8 +384,37 @@ class DeferredVideo private constructor(
            ********** OBTAIN STATIC PROGRESSIVE FRAMES **********
            ****************************************************** */
 
-        private class Render(val transparentCanvasBitmap: Bitmap, val userBitmap: Bitmap) : AutoCloseable {
+        private class Render(
+            val transparentCanvasBitmap: Bitmap,
+            val userBitmap: Bitmap,
+            val renderShift: Double,
+            private val overlayBitmapFile: ((DeferredImage.FlashingStateKey) -> Path?)?
+        ) : AutoCloseable {
+            private val flashingOverlays =
+                HashMap<DeferredImage.FlashingStateKey, SoftReference<Bitmap>>()
+
+            @Synchronized
+            fun getOrCreateFlashingOverlay(
+                stateKey: DeferredImage.FlashingStateKey,
+                create: () -> Bitmap
+            ): Bitmap {
+                val overlay = flashingOverlays[stateKey]?.get()
+                if (overlay != null)
+                    return overlay
+                val loaded = overlayBitmapFile?.invoke(stateKey)?.let {
+                    RenderDiskCache.loadBitmap(it, transparentCanvasBitmap.spec)
+                }
+                if (loaded != null)
+                    return loaded.also { flashingOverlays[stateKey] = SoftReference(it) }
+                return create().also { created ->
+                    flashingOverlays[stateKey] = SoftReference(created)
+                    overlayBitmapFile?.invoke(stateKey)?.let { RenderDiskCache.storeBitmap(it, created) }
+                }
+            }
+
             override fun close() {
+                for (overlay in flashingOverlays.values)
+                    overlay.get()?.close()
                 transparentCanvasBitmap.close()
                 userBitmap.close()
             }
@@ -409,7 +441,7 @@ class DeferredVideo private constructor(
                 preloading = true
             ) {
                 override fun createRenders(
-                    image: DeferredImage, baseShift: Int, microShifts: DoubleArray, height: Int
+                    chunkIdx: Int, image: DeferredImage, baseShift: Int, microShifts: DoubleArray, height: Int
                 ): List<Render> {
                     // IMPORTANT: This method will be called from different threads at the same time when stuff is
                     // pre-rendered in the background. As such, we can't use any BitmapConverters or other stateful
@@ -418,10 +450,22 @@ class DeferredVideo private constructor(
                     val resolution = Resolution(workWidth, h)
                     val renderCanvasSpec = Bitmap.Spec(resolution, canvasRepresentation)
                     val renderUserSpec = Bitmap.Spec(resolution, userSpec.representation)
-                    val transparentCanvasBitmaps = microShifts.map { ms ->
-                        val bmp = Bitmap.allocate(renderCanvasSpec)
-                        Canvas.forBitmap(bmp.zero(), canvasCeiling).use { materialize(it, image, -(baseShift + ms)) }
-                        bmp
+                    val transparentCanvasBitmaps = microShifts.mapIndexed { microShiftIdx, ms ->
+                        val cached = diskCache?.chunkFile(chunkIdx, microShiftIdx)?.let {
+                            RenderDiskCache.loadBitmap(it, renderCanvasSpec)
+                        }
+                        if (cached != null)
+                            cached
+                        else
+                            Bitmap.allocate(renderCanvasSpec).also { bmp ->
+                                Canvas.forBitmap(bmp.zero(), canvasCeiling).use {
+                                    materialize(
+                                        it, image, -(baseShift + ms), frameIdx = 0,
+                                        flashingTextMode = DeferredImage.FlashingTextMode.EXCLUDE
+                                    )
+                                }
+                                diskCache?.chunkFile(chunkIdx, microShiftIdx)?.let { RenderDiskCache.storeBitmap(it, bmp) }
+                            }
                     }
                     BitmapConverter(
                         renderCanvasSpec, renderUserSpec,
@@ -429,7 +473,7 @@ class DeferredVideo private constructor(
                     ).use { converter ->
                         // Note: Despite this map operation potentially being expensive if there are lots of bitmaps,
                         // we cannot parallelize it because BitmapConverter.convert() is not thread-safe.
-                        return transparentCanvasBitmaps.map { transparentCanvasBitmap ->
+                        return transparentCanvasBitmaps.mapIndexed { idx, transparentCanvasBitmap ->
                             val userBitmap = Bitmap.allocate(renderUserSpec)
                             if (grounding == null)
                                 converter.convert(transparentCanvasBitmap, userBitmap)
@@ -441,7 +485,11 @@ class DeferredVideo private constructor(
                                     }
                                     converter.convert(groundedCanvasBitmap, userBitmap)
                                 }
-                            Render(transparentCanvasBitmap, userBitmap)
+                            Render(
+                                transparentCanvasBitmap,
+                                userBitmap,
+                                baseShift + microShifts[idx]
+                            ) { stateKey -> diskCache?.overlayFile(chunkIdx, idx, stateKey) }
                         }
                     }
                 }
@@ -451,10 +499,54 @@ class DeferredVideo private constructor(
         private fun obtainStaticProgressiveFrame(progressiveFrameIdx: Int, useCanvasRep: Boolean): Frame {
             val responses = pageCache.query(progressiveFrameIdx)
             val r = responses.singleOrNull()
+            val hasFlashingText = animateFlashingText &&
+                    responses.any { resp ->
+                        when (resp) {
+                            is PageCache.Response.Image -> resp.image.hasFlashingText(staticLayers)
+                            is PageCache.Response.Render -> resp.image.hasFlashingText(staticLayers)
+                        }
+                    }
             return when {
                 responses.isEmpty() -> {
                     val bitmap = if (useCanvasRep) blankCanvasBitmap else blankUserBitmap
                     Frame(bitmap, writable = false, shift = 0)
+                }
+                hasFlashingText -> {
+                    val canvasBitmap = Bitmap.allocate(canvasWorkSpec)
+                    Canvas.forBitmap(canvasBitmap, canvasCeiling).use { canvas ->
+                        if (grounding == null) canvasBitmap.zero() else canvas.fill(Canvas.Shader.Solid(grounding))
+                        for (resp in responses)
+                            when (resp) {
+                                is PageCache.Response.Image ->
+                                    canvas.compositeLayer(alpha = resp.alpha) {
+                                        materialize(
+                                            canvas, resp.image, -resp.shift, progressiveFrameIdx,
+                                            DeferredImage.FlashingTextMode.ALL
+                                        )
+                                    }
+                                is PageCache.Response.Render -> {
+                                    canvas.drawImageFast(
+                                        resp.render.transparentCanvasBitmap, alpha = resp.alpha, y = -resp.shift
+                                    )
+                                    val overlayState = resp.image.flashingStateKey(staticLayers, progressiveFrameIdx)
+                                    if (overlayState != null) {
+                                        val overlay = resp.render.getOrCreateFlashingOverlay(overlayState) {
+                                            val bitmap = Bitmap.allocate(resp.render.transparentCanvasBitmap.spec)
+                                            Canvas.forBitmap(bitmap.zero(), canvasCeiling).use {
+                                                materialize(
+                                                    it, resp.image, -resp.render.renderShift, progressiveFrameIdx,
+                                                    DeferredImage.FlashingTextMode.ONLY
+                                                )
+                                            }
+                                            bitmap
+                                        }
+                                        canvas.drawImageFast(overlay, alpha = resp.alpha, y = -resp.shift)
+                                    }
+                                }
+                            }
+                    }
+                    val bitmap = if (useCanvasRep) canvasBitmap else canvas2userAndClose(canvasBitmap)
+                    Frame(bitmap, writable = true, shift = 0)
                 }
                 r is PageCache.Response.Render && r.alpha == 1.0 -> when {
                     !useCanvasRep -> Frame(r.render.userBitmap, writable = false, shift = r.shift)
@@ -476,7 +568,7 @@ class DeferredVideo private constructor(
                             when (resp) {
                                 is PageCache.Response.Image ->
                                     canvas.compositeLayer(alpha = resp.alpha) {
-                                        materialize(canvas, resp.image, -resp.shift)
+                                        materialize(canvas, resp.image, -resp.shift, progressiveFrameIdx)
                                     }
                                 is PageCache.Response.Render ->
                                     canvas.drawImageFast(
@@ -490,10 +582,19 @@ class DeferredVideo private constructor(
             }
         }
 
-        private fun materialize(canvas: Canvas, defImg: DeferredImage, y: Double) {
+        private fun materialize(
+            canvas: Canvas,
+            defImg: DeferredImage,
+            y: Double,
+            frameIdx: Int,
+            flashingTextMode: DeferredImage.FlashingTextMode = DeferredImage.FlashingTextMode.ALL
+        ) {
             val shiftedSrc = if (y == 0.0) defImg else
                 DeferredImage(canvas.width, canvas.height.toY()).apply { drawDeferredImage(defImg, y = y.toY()) }
-            shiftedSrc.materialize(canvas, cache, staticLayers)
+            shiftedSrc.materialize(
+                canvas, cache, staticLayers, frameIdx = frameIdx, animateFlashingText = animateFlashingText,
+                flashingTextMode = flashingTextMode
+            )
         }
 
         /* *****************************************************
@@ -925,14 +1026,14 @@ class DeferredVideo private constructor(
                 do {
                     chunkShift += chunkSpacing
                     val chunkHeight = min(maxChunkHeight, maxY - chunkShift)
-                    chunks.add(Chunk(chunkShift, chunkHeight, insn.image, microShifts))
+                    chunks.add(Chunk(chunks.size, chunkShift, chunkHeight, insn.image, microShifts))
                 } while (chunkShift + chunkHeight < maxY)
                 lastChunkIndices[insnIdx] = chunks.size - 1
             }
         }
 
         protected abstract fun createRenders(
-            image: DeferredImage, baseShift: Int, microShifts: DoubleArray, height: Int
+            chunkIdx: Int, image: DeferredImage, baseShift: Int, microShifts: DoubleArray, height: Int
         ): List<R>
 
         fun close() {
@@ -993,7 +1094,7 @@ class DeferredVideo private constructor(
                 // to the consumer. This is slower than using cached renders, but it's our only option.
                 -1 -> Response.Image(chunk.image, shift, alpha)
                 // Otherwise, pass the found cached render.
-                else -> Response.Render(microShiftedRenders[imageIdx], floor(shift).toInt() - chunk.shift, alpha)
+                else -> Response.Render(chunk.image, microShiftedRenders[imageIdx], floor(shift).toInt() - chunk.shift, alpha)
             }
         }
 
@@ -1014,7 +1115,7 @@ class DeferredVideo private constructor(
         // method returns.
         private fun loadChunk(chunk: Chunk<R>): List<R> {
             try {
-                val microShiftedRenders = createRenders(chunk.image, chunk.shift, chunk.microShifts, chunk.height)
+                val microShiftedRenders = createRenders(chunk.index, chunk.image, chunk.shift, chunk.microShifts, chunk.height)
                 chunk.microShiftedRenders.set(SoftReference(microShiftedRenders))
                 return microShiftedRenders
             } finally {
@@ -1034,11 +1135,12 @@ class DeferredVideo private constructor(
 
         sealed interface Response<R> {
             class Image<R>(val image: DeferredImage, val shift: Double, val alpha: Double) : Response<R>
-            class Render<R>(val render: R, val shift: Int, val alpha: Double) : Response<R>
+            class Render<R>(val image: DeferredImage, val render: R, val shift: Int, val alpha: Double) : Response<R>
         }
 
 
         private class Chunk<R>(
+            val index: Int,
             val shift: Int,
             val height: Int,
             val image: DeferredImage,

@@ -45,7 +45,10 @@ class DeliverRenderQueuePanel(private val ctrl: ProjectController) : JScrollPane
             rowHeight = 40
             columnModel.apply {
                 // These cells will be rendered using special components.
-                getColumn(4).cellRenderer = WordWrapCellRenderer()
+                getColumn(4).apply {
+                    cellRenderer = DestinationLinkCell()
+                    cellEditor = DestinationLinkCell { rowIdx -> tryOpen(jobTableModel.rows[rowIdx].job.prefix) }
+                }
                 getColumn(5).cellRenderer = ProgressCellRenderer()
                 getColumn(6).apply {
                     cellRenderer = CancelButtonCell()
@@ -188,6 +191,7 @@ class DeliverRenderQueuePanel(private val ctrl: ProjectController) : JScrollPane
             var updatedTime: Instant? = null
             var progress: Any = 0
             val isFinished get() = progress !is Int
+            val isSuccessful get() = progress === FINISHED
         }
 
         val rows = mutableListOf<Row>()
@@ -218,7 +222,8 @@ class DeliverRenderQueuePanel(private val ctrl: ProjectController) : JScrollPane
         }
 
         // Only the cancel button column should be editable, making the cancel buttons clickable.
-        override fun isCellEditable(rowIndex: Int, colIndex: Int) = colIndex == 6
+        override fun isCellEditable(rowIndex: Int, colIndex: Int) =
+            colIndex == 6 || colIndex == 4 && rows[rowIndex].isSuccessful
 
     }
 
@@ -272,6 +277,43 @@ class DeliverRenderQueuePanel(private val ctrl: ProjectController) : JScrollPane
             else -> throw IllegalArgumentException()
         }
 
+    }
+
+
+    private class DestinationLinkCell(private val callback: ((Int) -> Unit)? = null) :
+        TableCellRenderer, AbstractCellEditor(), TableCellEditor {
+
+        private val plainRenderer = WordWrapCellRenderer()
+        private val linkRenderer = WordWrapCellRenderer(allowHtml = true)
+        private var curRowIdx = 0
+
+        override fun getTableCellRendererComponent(
+            table: JTable, value: Any, isSelected: Boolean, hasFocus: Boolean, rowIdx: Int, colIdx: Int
+        ): JComponent {
+            val row = (table.model as JobTableModel).rows[rowIdx]
+            return if (!row.isSuccessful)
+                plainRenderer.getTableCellRendererComponent(table, value, isSelected, hasFocus, rowIdx, colIdx)
+            else
+                linkRenderer.getTableCellRendererComponent(
+                    table, """<html><u><font color="$PALETTE_BLUE">${htmlEscape(value as String)}</font></u></html>""",
+                    isSelected, hasFocus, rowIdx, colIdx
+                )
+        }
+
+        override fun getCellEditorValue() = null
+        override fun shouldSelectCell(anEvent: EventObject) = false
+
+        override fun getTableCellEditorComponent(
+            table: JTable, value: Any, isSelected: Boolean, rowIdx: Int, colIdx: Int
+        ): JComponent {
+            curRowIdx = rowIdx
+            callback?.invoke(curRowIdx)
+            SwingUtilities.invokeLater(::stopCellEditing)
+            return getTableCellRendererComponent(table, value, isSelected, false, rowIdx, colIdx)
+        }
+
+        private fun htmlEscape(text: String): String =
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     }
 
 

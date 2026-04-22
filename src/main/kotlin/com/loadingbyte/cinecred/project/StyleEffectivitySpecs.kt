@@ -301,6 +301,12 @@ private val LAYER_EFFECTIVITY_SPECS: List<StyleEffectivitySpec<Layer>> = listOf(
         isTotallyIneffective = { _, style -> style.coloring == LayerColoring.OFF }
     ),
     StyleEffectivitySpec(
+        Layer::flashColors.st(), Layer::flashIntervalFrames.st(),
+        isTotallyIneffective = { _, style ->
+            style.coloring != LayerColoring.PLAIN || style.shape != LayerShape.TEXT
+        }
+    ),
+    StyleEffectivitySpec(
         Layer::color2.st(), Layer::gradientAngleDeg.st(), Layer::gradientExtentRfh.st(), Layer::gradientShiftRfh.st(),
         isTotallyIneffective = { _, style -> style.coloring != LayerColoring.GRADIENT }
     ),

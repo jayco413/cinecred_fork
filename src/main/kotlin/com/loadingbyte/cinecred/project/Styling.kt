@@ -6,6 +6,7 @@ import com.loadingbyte.cinecred.imaging.Picture
 import com.loadingbyte.cinecred.imaging.Tape
 import com.loadingbyte.cinecred.imaging.Transition
 import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.persistentListOf
 import java.awt.Font
 import java.util.*
 import kotlin.io.path.name
@@ -276,6 +277,8 @@ data class Layer(
     override val collapsed: Boolean,
     val coloring: LayerColoring,
     val color1: Color4f,
+    val flashColors: PersistentList<Color4f> = persistentListOf(),
+    val flashIntervalFrames: Int = 0,
     val color2: Color4f,
     val gradientAngleDeg: Double,
     val gradientExtentRfh: Double,

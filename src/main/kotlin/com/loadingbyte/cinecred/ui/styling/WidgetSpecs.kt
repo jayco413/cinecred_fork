@@ -3,6 +3,7 @@ package com.loadingbyte.cinecred.ui.styling
 import com.loadingbyte.cinecred.common.FPS
 import com.loadingbyte.cinecred.common.TimecodeFormat
 import com.loadingbyte.cinecred.common.l10n
+import com.loadingbyte.cinecred.imaging.Color4f
 import com.loadingbyte.cinecred.project.*
 import com.loadingbyte.cinecred.ui.helper.*
 import com.loadingbyte.cinecred.ui.styling.ToggleButtonGroupWidgetSpec.Show.*
@@ -259,14 +260,18 @@ private val LAYER_WIDGET_SPECS: List<StyleWidgetSpec<Layer, *>> = listOf(
     ),
     ToggleButtonGroupWidgetSpec(Layer::coloring.st(), ICON),
     WidthWidgetSpec(Layer::color1.st(), WidthSpec.TINIER),
+    WidthWidgetSpec(Layer::flashColors.st(), WidthSpec.TINIER),
+    WidthWidgetSpec(Layer::flashIntervalFrames.st(), WidthSpec.WIDE),
     WidthWidgetSpec(Layer::color2.st(), WidthSpec.TINIER),
     WidthWidgetSpec(Layer::gradientAngleDeg.st(), WidthSpec.TINY),
     WidthWidgetSpec(Layer::gradientExtentRfh.st(), WidthSpec.LITTLE),
     WidthWidgetSpec(Layer::gradientShiftRfh.st(), WidthSpec.TINY),
+    SimpleListWidgetSpec(Layer::flashColors.st(), newElement = Color4f.WHITE),
     UnionWidgetSpec(
-        Layer::coloring.st(), Layer::color1.st(), Layer::color2.st(),
-        Layer::gradientAngleDeg.st(), Layer::gradientExtentRfh.st(), Layer::gradientShiftRfh.st(),
-        unionUnit = "px", settingIcons = listOf(null, null, null, ANGLE_ICON, SIZE_HEIGHT_ICON, ARROW_DIAGONAL_ICON)
+        Layer::coloring.st(), Layer::color1.st(), Layer::flashColors.st(), Layer::flashIntervalFrames.st(),
+        Layer::color2.st(), Layer::gradientAngleDeg.st(), Layer::gradientExtentRfh.st(), Layer::gradientShiftRfh.st(),
+        unionUnit = "px",
+        settingIcons = listOf(null, null, null, null, null, ANGLE_ICON, SIZE_HEIGHT_ICON, ARROW_DIAGONAL_ICON)
     ),
     ToggleButtonGroupWidgetSpec(Layer::shape.st(), ICON_AND_LABEL),
     ToggleButtonGroupWidgetSpec(Layer::stripePreset.st(), ICON),

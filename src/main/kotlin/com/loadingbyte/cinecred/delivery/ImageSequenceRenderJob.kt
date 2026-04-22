@@ -44,6 +44,7 @@ class ImageSequenceRenderJob private constructor(
     private val sliders: Sliders,
     private val styling: Styling,
     private val video: DeferredVideo,
+    private val projectDir: Path,
     private val dir: Path,
     private val filenamePattern: String
 ) : RenderJob {
@@ -101,9 +102,26 @@ class ImageSequenceRenderJob private constructor(
             scaledVideo.resolution, backendRep, scan,
             if (scan == Bitmap.Scan.PROGRESSIVE) Bitmap.Content.PROGRESSIVE_FRAME else Bitmap.Content.INTERLEAVED_FIELDS
         )
+        val diskCache = RenderDiskCache.open(
+            projectDir,
+            dir,
+            buildString {
+                append("job=image-sequence\n")
+                append("format=${format.label}\n")
+                append("configIndex=${format.configs.indexOf(config)}\n")
+                append("resolutionSlider=${sliders.resolution}\n")
+                append("videoResolution=${scaledVideo.resolution}\n")
+                append("videoFps=${scaledVideo.fps}\n")
+                append("backendSpec=$backendSpec\n")
+                append("grounding=${styling.global.grounding}\n")
+                append("ceiling=$ceiling\n")
+                append("animateFlashingText=true\n")
+            }
+        )
 
         DeferredVideo.BitmapBackend(
-            scaledVideo, listOf(STATIC), listOf(TAPES), grounding, backendSpec, ceiling
+            scaledVideo, listOf(STATIC), listOf(TAPES), grounding, backendSpec, ceiling,
+            animateFlashingText = true, diskCache = diskCache
         ).use { backend ->
             val numFrames = scaledVideo.numFrames
             val numWorkers = Runtime.getRuntime().availableProcessors() - 1
@@ -178,6 +196,7 @@ class ImageSequenceRenderJob private constructor(
         configAssortment * choice(SPATIAL_SCALING_LOG2) * choice(FPS_SCALING) * choice(SCAN)
     ) {
         override fun createRenderJob(
+            projectDir: Path,
             config: Config,
             sliders: Sliders,
             styling: Styling,
@@ -185,7 +204,7 @@ class ImageSequenceRenderJob private constructor(
             video: DeferredVideo?,
             fileOrDir: Path,
             filenamePattern: String?
-        ) = ImageSequenceRenderJob(this, config, sliders, styling, video!!, fileOrDir, filenamePattern!!)
+        ) = ImageSequenceRenderJob(this, config, sliders, styling, video!!, projectDir, fileOrDir, filenamePattern!!)
     }
 
 }

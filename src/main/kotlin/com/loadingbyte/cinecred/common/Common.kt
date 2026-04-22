@@ -41,6 +41,7 @@ import kotlin.math.sqrt
 
 
 val VERSION = useResourceStream("/version") { it.bufferedReader().readText().trim() }
+val BUILD_ID = useResourceStream("/build-id") { it.bufferedReader().readText().trim() }
 val COPYRIGHT = useResourceStream("/copyright") { it.bufferedReader().readText().trim() }
 
 val USER_AGENT =

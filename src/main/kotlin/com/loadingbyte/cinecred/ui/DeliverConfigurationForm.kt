@@ -594,7 +594,7 @@ class DeliverConfigurationForm(private val ctrl: ProjectController) :
             val filenamePattern = filenameHashPattern.replace(Regex("#+")) { match -> "%0${match.value.length}d" }
 
             val renderJob = format.createRenderJob(
-                config, sliders, styling, pageDefImages, video, fileOrDir, filenamePattern
+                ctrl.projectDir, config, sliders, styling, pageDefImages, video, fileOrDir, filenamePattern
             )
 
             val info = DeliverRenderQueuePanel.RenderJobInfo(

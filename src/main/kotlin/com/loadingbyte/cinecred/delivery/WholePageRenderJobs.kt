@@ -195,6 +195,7 @@ class WholePageSequenceRenderJob private constructor(
         configAssortment * choice(SPATIAL_SCALING_LOG2)
     ) {
         override fun createRenderJob(
+            projectDir: Path,
             config: Config,
             sliders: Sliders,
             styling: Styling,
@@ -282,6 +283,7 @@ class WholePagePDFRenderJob private constructor(
                 fixed(PRIMARIES, BT709) * fixed(TRANSFER, SRGB) * choice(PDF_PROFILE)
     ) {
         override fun createRenderJob(
+            projectDir: Path,
             config: Config,
             sliders: Sliders,
             styling: Styling,

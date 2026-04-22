@@ -423,6 +423,7 @@ class TapeTimelineRenderJob private constructor(
         choice(FPS_SCALING) * choice(SCAN)
     ) {
         override fun createRenderJob(
+            projectDir: Path,
             config: Config,
             sliders: Sliders,
             styling: Styling,

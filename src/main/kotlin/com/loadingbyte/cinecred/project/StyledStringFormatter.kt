@@ -230,24 +230,7 @@ private fun generateFmtStrDesign(layers: List<Layer>, stdFont: FormattedString.F
     val lm = stdFont.unscaledAWTFont.lineMetrics
 
     val fmtStrLayers = layers.map { layer ->
-        val coloring = when (layer.coloring) {
-            LayerColoring.OFF ->
-                FormattedString.Layer.Coloring.Plain(
-                    color = Color4f(0f, 0f, 0f, 0f, ColorSpace.XYZD50)
-                )
-            LayerColoring.PLAIN ->
-                FormattedString.Layer.Coloring.Plain(
-                    color = layer.color1
-                )
-            LayerColoring.GRADIENT ->
-                FormattedString.Layer.Coloring.Gradient(
-                    color1 = layer.color1,
-                    color2 = layer.color2,
-                    angleDeg = layer.gradientAngleDeg,
-                    extentPx = layer.gradientExtentRfh * fh,
-                    shiftPx = layer.gradientShiftRfh * fh
-                )
-        }
+        val coloring = layer.toFormattedStringColoring(fh)
 
         val shape = when (layer.shape) {
             LayerShape.TEXT ->
@@ -354,6 +337,34 @@ private fun getLineJoinNumber(lineJoin: LineJoin): Int = when (lineJoin) {
     LineJoin.MITER -> BasicStroke.JOIN_MITER
     LineJoin.ROUND -> BasicStroke.JOIN_ROUND
     LineJoin.BEVEL -> BasicStroke.JOIN_BEVEL
+}
+
+internal fun Layer.toFormattedStringColoring(fh: Double): FormattedString.Layer.Coloring = when (coloring) {
+    LayerColoring.OFF ->
+        FormattedString.Layer.Coloring.Plain(
+            color = Color4f(0f, 0f, 0f, 0f, ColorSpace.XYZD50)
+        )
+    LayerColoring.PLAIN ->
+        if (shape == LayerShape.TEXT && flashColors.isNotEmpty() && flashIntervalFrames > 0)
+            FormattedString.Layer.Coloring.Flashing(
+                colors = buildList {
+                    add(color1)
+                    addAll(flashColors)
+                },
+                intervalFrames = flashIntervalFrames
+            )
+        else
+            FormattedString.Layer.Coloring.Plain(
+                color = color1
+            )
+    LayerColoring.GRADIENT ->
+        FormattedString.Layer.Coloring.Gradient(
+            color1 = color1,
+            color2 = color2,
+            angleDeg = gradientAngleDeg,
+            extentPx = gradientExtentRfh * fh,
+            shiftPx = gradientShiftRfh * fh
+        )
 }
 
 

@@ -56,6 +56,7 @@ class VideoContainerRenderJob private constructor(
     private val sliders: Sliders,
     private val styling: Styling,
     private val video: DeferredVideo,
+    private val projectDir: Path,
     private val file: Path
 ) : RenderJob {
 
@@ -128,6 +129,23 @@ class VideoContainerRenderJob private constructor(
             Bitmap.allocate(writerSpec.copy(representation = rgbRep)).zero()
                 .use { BitmapConverter.convert(it, blackWriterBitmap) }
         }
+        val diskCache = RenderDiskCache.open(
+            projectDir,
+            file,
+            buildString {
+                append("job=video-container\n")
+                append("format=${format.label}\n")
+                append("configIndex=${format.configs.indexOf(config)}\n")
+                append("resolutionSlider=${sliders.resolution}\n")
+                append("videoResolution=${scaledVideo.resolution}\n")
+                append("videoFps=${scaledVideo.fps}\n")
+                append("writerSpec=$writerSpec\n")
+                append("backendSpec=$backendSpec\n")
+                append("grounding=${styling.global.grounding}\n")
+                append("ceiling=$ceiling\n")
+                append("animateFlashingText=true\n")
+            }
+        )
 
         // We have a second thread materialize frames into a queue, and the current thread take frames from the queue
         // and submitting them to the VideoWriter. While this doesn't give us a huge performance boost over doing
@@ -137,7 +155,8 @@ class VideoContainerRenderJob private constructor(
         val materializer = Thread({
             try {
                 DeferredVideo.BitmapBackend(
-                    scaledVideo, listOf(STATIC), listOf(TAPES), grounding, backendSpec, ceiling
+                    scaledVideo, listOf(STATIC), listOf(TAPES), grounding, backendSpec, ceiling,
+                    animateFlashingText = true, diskCache = diskCache
                 ).use { backend ->
                     for (frameIdx in 0..<scaledVideo.numFrames) {
                         val colorBitmap = backend.materializeFrame(frameIdx)!!
@@ -245,6 +264,7 @@ class VideoContainerRenderJob private constructor(
         abstract fun videoWriterSettings(config: Config): List<VideoWriterSettings>
 
         override fun createRenderJob(
+            projectDir: Path,
             config: Config,
             sliders: Sliders,
             styling: Styling,
@@ -252,7 +272,7 @@ class VideoContainerRenderJob private constructor(
             video: DeferredVideo?,
             fileOrDir: Path,
             filenamePattern: String?
-        ) = VideoContainerRenderJob(this, config, sliders, styling, video!!, fileOrDir)
+        ) = VideoContainerRenderJob(this, config, sliders, styling, video!!, projectDir, fileOrDir)
 
     }
 

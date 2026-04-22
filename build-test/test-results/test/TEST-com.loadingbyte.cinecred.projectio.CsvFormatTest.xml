@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.loadingbyte.cinecred.projectio.CsvFormatTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-04-12T18:36:38.175Z" hostname="GALADRIEL" time="0.021">
+  <properties/>
+  <testcase name="keeps utf-8 csv characters()" classname="com.loadingbyte.cinecred.projectio.CsvFormatTest" time="0.019"/>
+  <testcase name="reads legacy windows-1252 csv characters()" classname="com.loadingbyte.cinecred.projectio.CsvFormatTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

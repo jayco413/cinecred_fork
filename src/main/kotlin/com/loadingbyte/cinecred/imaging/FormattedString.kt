@@ -292,6 +292,7 @@ class FormattedString private constructor(
             // Skip invisible (likely helper) layers early for improved performance.
             val invisible = when (val c = layer.coloring) {
                 is Layer.Coloring.Plain -> c.color.a == 0f
+                is Layer.Coloring.Flashing -> c.colors.all { it.a == 0f }
                 is Layer.Coloring.Gradient -> c.color1.a == 0f && c.color2.a == 0f
             }
             if (invisible)
@@ -427,6 +428,7 @@ class FormattedString private constructor(
     private fun makeCoat(coloring: Layer.Coloring, center: Point2D.Double): DeferredImage.Coat =
         when (coloring) {
             is Layer.Coloring.Plain -> DeferredImage.Coat.Plain(coloring.color)
+            is Layer.Coloring.Flashing -> DeferredImage.Coat.Flashing(coloring.colors, coloring.intervalFrames)
             is Layer.Coloring.Gradient -> {
                 val angleRad = Math.toRadians(coloring.angleDeg)
                 val dx = sin(angleRad)
@@ -829,6 +831,11 @@ class FormattedString private constructor(
 
             class Plain(
                 val color: Color4f
+            ) : Coloring
+
+            class Flashing(
+                val colors: List<Color4f>,
+                val intervalFrames: Int
             ) : Coloring
 
             class Gradient(

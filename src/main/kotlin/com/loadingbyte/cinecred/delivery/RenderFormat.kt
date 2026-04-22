@@ -56,6 +56,7 @@ abstract class RenderFormat(
         defaultConfig.getOrDefault(property)
 
     abstract fun createRenderJob(
+        projectDir: Path,
         config: Config,
         sliders: Sliders,
         styling: Styling,

@@ -577,7 +577,7 @@ class PlaybackCtrl(private val projectCtrl: ProjectController) : PlaybackCtrlCom
             val spec = Bitmap.Spec(video.resolution, representation, scan, content)
             videoBackend = DeferredVideo.BitmapBackend(
                 video, listOf(STATIC), listOf(TAPES), grounding, spec,
-                cache = materializationCache, randomAccessDraftMode = true
+                cache = materializationCache, randomAccessDraftMode = true, animateFlashingText = false
             )
             // Simulate materializing the currently selected frame while the FrameBuffer is being constructed in a
             // background thread. As expensive operations are cached, the subsequent materialization of that frame in
