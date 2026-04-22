@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.loadingbyte.cinecred.imaging.FlashingTextTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-04-12T18:36:38.100Z" hostname="GALADRIEL" time="0.044">
-  <properties/>
-  <testcase name="render cycles flashing coat by frame interval()" classname="com.loadingbyte.cinecred.imaging.FlashingTextTest" time="0.006"/>
-  <testcase name="plain text layer with flash colors becomes flashing coloring()" classname="com.loadingbyte.cinecred.imaging.FlashingTextTest" time="0.037"/>
-  <testcase name="preview keeps primary color for flashing coat()" classname="com.loadingbyte.cinecred.imaging.FlashingTextTest" time="0.0"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
